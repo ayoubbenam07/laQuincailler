@@ -33,9 +33,9 @@ export const getRevenueTrend = async (req, res) => {
     const trend = {};
 
     sales.forEach(sale => {
-      const dateKey = period === 'week' 
-        ? sale.createdAt.toISOString().split('T')[0] 
-        : sale.createdAt.toISOString().slice(0, 7);
+      const dateKey = period === 'year' 
+        ? sale.createdAt.toISOString().slice(0, 7)
+        : sale.createdAt.toISOString().split('T')[0];
 
       if (!trend[dateKey]) {
         trend[dateKey] = { date: dateKey, totalRevenue: 0, totalProfit: 0 };
@@ -70,12 +70,22 @@ export const getCashFlow = async (req, res) => {
       select: { totalAmount: true, amountPaid: true }
     });
 
+    const debtPayments = await prisma.debtPayment.findMany({
+      where: { createdAt: { gte: startDate } },
+      select: { amount: true }
+    });
+
     let totalCash = 0;
     let totalCredit = 0;
 
     sales.forEach(sale => {
       totalCash += sale.amountPaid;
       totalCredit += (sale.totalAmount - sale.amountPaid);
+    });
+
+    debtPayments.forEach(payment => {
+      totalCash += payment.amount;
+      totalCredit -= payment.amount;
     });
 
     res.status(200).json({
@@ -111,14 +121,49 @@ export const getInventoryValuation = async (req, res) => {
         categoryValuation[cat] = 0;
       }
       categoryValuation[cat] += val;
+      
     });
 
     res.status(200).json({
       totalValuation,
+      estimatedStockValue: totalValuation,
       byCategory: categoryValuation
     });
   } catch (error) {
     console.error("Error in getInventoryValuation:", error.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+// @desc    Get Estimated Stock Value
+// @route   GET /api/dashboard/stock-value-estimate
+// @access  Private/Admin
+export const getStockValueEstimate = async (req, res) => {
+  try {
+    const products = await prisma.product.findMany({
+      select: { category: true, stock: true, basePrice: true }
+    });
+
+    let totalValuation = 0;
+    const categoryValuation = {};
+
+    products.forEach((product) => {
+      const valuation = (product.stock || 0) * (product.basePrice || 0);
+      totalValuation += valuation;
+
+      const category = product.category || "UNCATEGORIZED";
+      if (!categoryValuation[category]) {
+        categoryValuation[category] = 0;
+      }
+      categoryValuation[category] += valuation;
+    });
+
+    res.status(200).json({
+      estimatedStockValue: totalValuation,
+      byCategory: categoryValuation
+    });
+  } catch (error) {
+    console.error("Error in getStockValueEstimate:", error.message);
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
@@ -228,26 +273,63 @@ export const getSummary = async (req, res) => {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0,0,0,0);
 
+    // Today's metrics
     const todaySales = await prisma.sale.aggregate({
       where: { createdAt: { gte: startOfDay } },
       _sum: { totalAmount: true, amountPaid: true },
       _count: { id: true }
     });
 
+    const todayDebtPayments = await prisma.debtPayment.aggregate({
+      where: { createdAt: { gte: startOfDay } },
+      _sum: { amount: true }
+    });
+
     const outOfStockCount = await prisma.product.count({
       where: { stock: { lte: 0 } }
+    });
+
+    // All-time metrics
+    const allTimeSales = await prisma.sale.aggregate({
+      _sum: { totalAmount: true },
+      _count: { id: true }
+    });
+
+    const allSales = await prisma.sale.findMany({
+      include: {
+        items: {
+          include: { product: { select: { basePrice: true } } }
+        }
+      }
+    });
+
+    let totalProfit = 0;
+    allSales.forEach((sale) => {
+      let cost = 0;
+      sale.items.forEach((item) => {
+        cost += item.quantity * (item.product?.basePrice || 0);
+      });
+      totalProfit += sale.totalAmount - cost;
     });
 
     const totalClientsDebt = await prisma.client.aggregate({
       _sum: { debt: true }
     });
 
+    const todayCashFromSales = todaySales._sum.amountPaid || 0;
+    const todayCashFromDebt = todayDebtPayments._sum.amount || 0;
+
     res.status(200).json({
+      // Today
       todayRevenue: todaySales._sum.totalAmount || 0,
-      todayCash: todaySales._sum.amountPaid || 0,
+      todayCash: todayCashFromSales + todayCashFromDebt,
       transactionsToday: todaySales._count.id || 0,
       outOfStockItems: outOfStockCount,
-      totalOutstandingDebt: totalClientsDebt._sum.debt || 0
+      // All-time
+      totalChiffreAffaires: allTimeSales._sum.totalAmount || 0,
+      totalProfit,
+      totalDette: totalClientsDebt._sum.debt || 0,
+      totalVentes: allTimeSales._count.id || 0
     });
   } catch (error) {
     console.error("Error in getSummary:", error.message);

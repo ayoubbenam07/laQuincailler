@@ -672,15 +672,17 @@ The database uses PostgreSQL via Prisma. Here are the core models and their rela
 
 #### `GET /summary`
 - **Access**: Admin
-- **Description**: Provides a quick overview: today's revenue, today's cash, daily transaction count, out-of-stock items, and store-wide outstanding debt.
+- **Description**: Provides a quick overview: today's revenue, today's cash, daily transaction count, out-of-stock items, and all-time totals (chiffre d'affaires, dette, ventes).
 - **Request**: None
 - **Response Example**:
   ```json
   {
-    "todaysRevenue": 850.0,
-    "todaysCash": 800.0,
-    "dailyTransactions": 25,
-    "outOfStockCount": 3,
-    "totalOutstandingDebt": 1250.0
+    "todayRevenue": 850.0,
+    "todayCash": 800.0,
+    "transactionsToday": 25,
+    "outOfStockItems": 3,
+    "totalChiffreAffaires": 125000.0,
+    "totalDette": 1250.0,
+    "totalVentes": 430
   }
   ```

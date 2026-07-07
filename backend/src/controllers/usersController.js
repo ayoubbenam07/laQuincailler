@@ -55,7 +55,7 @@ export const createCashier = async (req, res) => {
 export const getAllCashiers = async (req, res) => {
   try {
     const cashiers = await prisma.user.findMany({
-      where: { role: "CASHIER" },
+      where: { role: "CASHIER", isDeleted: false },
       select: { id: true, username: true, role: true },
     });
     res.status(200).json(cashiers);
@@ -77,8 +77,9 @@ export const getCashierById = async (req, res) => {
     const { id } = req.params;
     const cashier = await prisma.user.findFirst({
       where: {
-        id: parseInt(id),
+        id: id,
         role: "CASHIER",
+        isDeleted: false,
       },
       select: { id: true, username: true, role: true },
     });
@@ -110,8 +111,9 @@ export const putCashier = async (req, res) => {
 
     const existingCashier = await prisma.user.findFirst({
       where: {
-        id: parseInt(id),
+        id: id,
         role: "CASHIER",
+        isDeleted: false,
       },
     });
 
@@ -136,7 +138,7 @@ export const putCashier = async (req, res) => {
     }
 
     const updatedCashier = await prisma.user.update({
-      where: { id: parseInt(id) },
+      where: { id: id },
       data: updateData,
       select: { id: true, username: true, role: true },
     });
@@ -159,8 +161,9 @@ export const deleteCashier = async (req, res) => {
     
     const existingCashier = await prisma.user.findFirst({
       where: {
-        id: parseInt(id),
+        id: id,
         role: "CASHIER",
+        isDeleted: false,
       },
     });
 
@@ -168,8 +171,9 @@ export const deleteCashier = async (req, res) => {
       return res.status(404).json({ error: "Cashier not found" });
     }
 
-    await prisma.user.delete({
-      where: { id: parseInt(id) },
+    await prisma.user.update({
+      where: { id: id },
+      data: { isDeleted: true, syncStatus: "pending" },
     });
 
     res.status(200).json({ message: "Cashier deleted successfully" });

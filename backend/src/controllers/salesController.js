@@ -36,6 +36,8 @@ export const createSale = async (req, res) => {
       totalAmount += item.quantity * item.priceSold;
     }
 
+    const actualAmountPaid = Math.min(amountPaid, totalAmount);
+
     // Must run in a transaction
     const result = await prisma.$transaction(async (prisma) => {
       // 2 & 3. Create the Sale record and the tied SaleItem records
@@ -44,7 +46,7 @@ export const createSale = async (req, res) => {
           cashierId,
           clientId: clientId || null,
           totalAmount,
-          amountPaid,
+          amountPaid: actualAmountPaid,
           items: {
             create: items.map(item => ({
               productId: item.productId,
@@ -68,18 +70,6 @@ export const createSale = async (req, res) => {
         });
       }
 
-      // 5. If clientId is provided and amountPaid < totalAmount, add difference to Client.debt
-      if (clientId && amountPaid < totalAmount) {
-        const debtToAdd = totalAmount - amountPaid;
-        await prisma.client.update({
-          where: { id: clientId },
-          data: {
-            debt: {
-              increment: debtToAdd
-            }
-          }
-        });
-      }
 
       return sale;
     });
@@ -102,11 +92,11 @@ export const getAllSales = async (req, res) => {
     const userRole = req.user.role;
     const userId = req.user.id;
     
-    let whereClause = {};
+    let whereClause = { isDeleted: false };
 
     if (userRole === "ADMIN") {
       if (cashierId) {
-        whereClause.cashierId = parseInt(cashierId);
+        whereClause.cashierId = cashierId;
       }
     } else {
       // Cashier can only fetch their own sales
@@ -152,10 +142,11 @@ export const getSaleById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const sale = await prisma.sale.findUnique({
-      where: { id: parseInt(id) },
+    const sale = await prisma.sale.findFirst({
+      where: { id: id, isDeleted: false },
       include: {
         items: {
+          where: { isDeleted: false },
           include: {
             product: { select: { name: true } }
           }
@@ -194,13 +185,13 @@ export const putSale = async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid amountPaid" });
     }
 
-    const saleId = parseInt(id);
+    const saleId = id;
 
     const result = await prisma.$transaction(async (prisma) => {
       // 1. Fetch old sale with items
-      const oldSale = await prisma.sale.findUnique({
-        where: { id: saleId },
-        include: { items: true }
+      const oldSale = await prisma.sale.findFirst({
+        where: { id: saleId, isDeleted: false },
+        include: { items: { where: { isDeleted: false } } }
       });
 
       if (!oldSale) {
@@ -215,17 +206,11 @@ export const putSale = async (req, res) => {
         });
       }
 
-      if (oldSale.clientId && oldSale.amountPaid < oldSale.totalAmount) {
-        const oldDebt = oldSale.totalAmount - oldSale.amountPaid;
-        await prisma.client.update({
-          where: { id: oldSale.clientId },
-          data: { debt: { decrement: oldDebt } }
-        });
-      }
 
       // 3. Delete old items
-      await prisma.saleItem.deleteMany({
-        where: { saleId }
+      await prisma.saleItem.updateMany({
+        where: { saleId },
+        data: { isDeleted: true, syncStatus: "pending" }
       });
 
       // 4. Calculate new total
@@ -233,6 +218,8 @@ export const putSale = async (req, res) => {
       for (const item of items) {
         newTotalAmount += item.quantity * item.priceSold;
       }
+
+      const actualAmountPaid = Math.min(amountPaid, newTotalAmount);
 
       // 5. Apply new side effects (stock & debt)
       for (const item of items) {
@@ -242,13 +229,6 @@ export const putSale = async (req, res) => {
         });
       }
 
-      if (clientId && amountPaid < newTotalAmount) {
-        const newDebt = newTotalAmount - amountPaid;
-        await prisma.client.update({
-          where: { id: clientId },
-          data: { debt: { increment: newDebt } }
-        });
-      }
 
       // 6. Update Sale record and create new items
       const updatedSale = await prisma.sale.update({
@@ -256,7 +236,7 @@ export const putSale = async (req, res) => {
         data: {
           clientId: clientId || null,
           totalAmount: newTotalAmount,
-          amountPaid,
+          amountPaid: actualAmountPaid,
           items: {
             create: items.map(item => ({
               productId: item.productId,
@@ -289,12 +269,12 @@ export const putSale = async (req, res) => {
 export const deleteSale = async (req, res) => {
   try {
     const { id } = req.params;
-    const saleId = parseInt(id);
+    const saleId = id;
 
     await prisma.$transaction(async (prisma) => {
-      const sale = await prisma.sale.findUnique({
-        where: { id: saleId },
-        include: { items: true }
+      const sale = await prisma.sale.findFirst({
+        where: { id: saleId, isDeleted: false },
+        include: { items: { where: { isDeleted: false } } }
       });
 
       if (!sale) {
@@ -309,22 +289,16 @@ export const deleteSale = async (req, res) => {
         });
       }
 
-      // Revert debt
-      if (sale.clientId && sale.amountPaid < sale.totalAmount) {
-        const debtToRevert = sale.totalAmount - sale.amountPaid;
-        await prisma.client.update({
-          where: { id: sale.clientId },
-          data: { debt: { decrement: debtToRevert } }
-        });
-      }
 
       // Delete items and sale
-      await prisma.saleItem.deleteMany({
-        where: { saleId }
+      await prisma.saleItem.updateMany({
+        where: { saleId },
+        data: { isDeleted: true, syncStatus: "pending" }
       });
 
-      await prisma.sale.delete({
-        where: { id: saleId }
+      await prisma.sale.update({
+        where: { id: saleId },
+        data: { isDeleted: true, syncStatus: "pending" }
       });
     });
 

@@ -9,7 +9,9 @@ import prisma from "../config/prisma.js";
 //   .then(data => console.log(data))
 export const getAllProducts = async (req, res) => {
   try {
-    const products = await prisma.product.findMany();
+    const products = await prisma.product.findMany({
+      where: { isDeleted: false }
+    });
     res.status(200).json(products);
   } catch (error) {
     console.error("Error in getAllProducts:", error.message);
@@ -27,8 +29,8 @@ export const getAllProducts = async (req, res) => {
 export const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await prisma.product.findUnique({
-      where: { id: parseInt(id) },
+    const product = await prisma.product.findFirst({
+      where: { id: id, isDeleted: false },
     });
 
     if (!product) {
@@ -89,8 +91,8 @@ export const createProduct = async (req, res) => {
         if (!existing) unique = true;
       }
     } else {
-      const existingProduct = await prisma.product.findUnique({
-        where: { barcode },
+      const existingProduct = await prisma.product.findFirst({
+        where: { barcode, isDeleted: false },
       });
 
       if (existingProduct) {
@@ -137,8 +139,8 @@ export const putProduct = async (req, res) => {
     const { id } = req.params;
     const updateData = req.body;
 
-    const existingProduct = await prisma.product.findUnique({
-      where: { id: parseInt(id) },
+    const existingProduct = await prisma.product.findFirst({
+      where: { id: id, isDeleted: false },
     });
 
     if (!existingProduct) {
@@ -163,7 +165,7 @@ export const putProduct = async (req, res) => {
     if (updateData.weight !== undefined) updateData.weight = parseFloat(updateData.weight);
 
     const updatedProduct = await prisma.product.update({
-      where: { id: parseInt(id) },
+      where: { id: id },
       data: updateData,
     });
 
@@ -183,21 +185,98 @@ export const deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const existingProduct = await prisma.product.findUnique({
-      where: { id: parseInt(id) },
+    const existingProduct = await prisma.product.findFirst({
+      where: { id: id, isDeleted: false },
     });
 
     if (!existingProduct) {
       return res.status(404).json({ error: "Product not found" });
     }
 
-    await prisma.product.delete({
-      where: { id: parseInt(id) },
+    await prisma.product.update({
+      where: { id: id },
+      data: { isDeleted: true, syncStatus: "pending" },
     });
 
     res.status(200).json({ message: "Product deleted successfully" });
   } catch (error) {
     console.error("Error in deleteProduct:", error.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+// @desc    Bulk import/update products from receipt
+// @route   POST /api/products/bulk
+// @access  Private/Admin
+export const bulkImportProducts = async (req, res) => {
+  try {
+    const { products } = req.body;
+    
+    if (!products || !Array.isArray(products)) {
+      return res.status(400).json({ error: "Invalid product array" });
+    }
+
+    const results = { created: 0, updated: 0, errors: [] };
+
+    // Process sequentially to handle barcode uniqueness properly
+    for (const item of products) {
+      try {
+        const basePrice = parseFloat(item.basePrice);
+        const addition = parseFloat(item.addition) || 0;
+        const finalPrice = basePrice + addition;
+
+        if (item.action === 'UPDATE' && item.id) {
+          // Update existing product
+          const existing = await prisma.product.findFirst({ where: { id: item.id, isDeleted: false } });
+          if (existing) {
+            await prisma.product.update({
+              where: { id: item.id },
+              data: {
+                stock: existing.stock + parseFloat(item.stockToAdd || item.stock || 0),
+                basePrice,
+                addition,
+                finalPrice,
+                ...(item.category ? { category: item.category } : {})
+              }
+            });
+            results.updated++;
+          } else {
+            results.errors.push(`Product ID ${item.id} not found for update`);
+          }
+        } else if (item.action === 'CREATE') {
+          // Create new product
+          let barcode = item.barcode;
+          if (!barcode) {
+             let unique = false;
+             while (!unique) {
+               barcode = Math.floor(100000000000 + Math.random() * 900000000000).toString();
+               const existing = await prisma.product.findFirst({ where: { barcode, isDeleted: false } });
+               if (!existing) unique = true;
+             }
+          }
+          await prisma.product.create({
+            data: {
+              barcode,
+              name: item.name,
+              basePrice,
+              addition,
+              finalPrice,
+              stock: parseFloat(item.stock || item.stockToAdd || 0),
+              minStock: 10,
+              category: item.category || "OTHER"
+            }
+          });
+          results.created++;
+        }
+      } catch (err) {
+        console.error("Error processing item:", item.name, err);
+        results.errors.push(`Error on ${item.name || 'unknown'}: ${err.message}`);
+      }
+    }
+
+    res.status(200).json(results);
+  } catch (error) {
+    console.error("Error in bulkImportProducts:", error.message);
     res.status(500).json({ error: "Internal Server Error" });
   }
 };

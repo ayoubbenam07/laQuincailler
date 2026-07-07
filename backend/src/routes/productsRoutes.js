@@ -1,5 +1,5 @@
 import express from "express";
-import { getAllProducts, getProductById, createProduct, putProduct, deleteProduct } from "../controllers/productsController.js";
+import { getAllProducts, getProductById, createProduct, putProduct, deleteProduct, bulkImportProducts } from "../controllers/productsController.js";
 import { protectRoute, isAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
@@ -11,6 +11,8 @@ router.get("/", getAllProducts);
 router.get("/:id", getProductById);
 
 router.post("/", isAdmin, createProduct);
+
+router.post("/bulk", isAdmin, bulkImportProducts);
 
 router.put("/:id", isAdmin, putProduct);
 

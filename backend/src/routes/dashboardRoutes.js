@@ -3,6 +3,7 @@ import {
   getRevenueTrend, 
   getCashFlow, 
   getInventoryValuation, 
+  getStockValueEstimate,
   getDeadStock, 
   getLowStock, 
   getCashierStats,
@@ -17,6 +18,7 @@ router.use(protectRoute, isAdmin);
 router.get("/revenue-trend", getRevenueTrend);
 router.get("/cash-flow", getCashFlow);
 router.get("/inventory-valuation", getInventoryValuation);
+router.get("/stock-value-estimate", getStockValueEstimate);
 router.get("/dead-stock", getDeadStock);
 router.get("/low-stock", getLowStock);
 router.get("/cashier-stats", getCashierStats);
